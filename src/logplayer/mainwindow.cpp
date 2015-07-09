@@ -28,6 +28,11 @@
 #include "../ra/refereestatuswidget.h"
 #include "../ra/logfile/logfilereader.h"
 #include "../ra/plotter/plotter.h"
+//#include "protobuf/ssl_referee.pb.h"
+//#include "ssl_referee.pb.h"
+//#include "status.pb.h"
+//#include "gamestate.pb.h"
+//#include "status.h"
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -44,6 +49,11 @@ MainWindow::MainWindow(QWidget *parent) :
     // create log reader and the belonging thread
     m_logthread = new QThread();
     m_logthread->start();
+
+    command_counter = 0;
+
+    sendingSocket = new NetworkSender();
+    sendingSocket->configure("224.5.23.1",10003);
 
     m_logreader = new LogFileReader();
     m_logreader->moveToThread(m_logthread);
@@ -79,7 +89,7 @@ MainWindow::MainWindow(QWidget *parent) :
     QSignalMapper *mapper = new QSignalMapper(this);
     connect(mapper, SIGNAL(mapped(int)), ui->spinSpeed, SLOT(setValue(int)));
     QAction *speedActions[] = { ui->actionSpeed1, ui->actionSpeed5, ui->actionSpeed10, ui->actionSpeed20,
-                              ui->actionSpeed50, ui->actionSpeed100, ui->actionSpeed200, ui->actionSpeed1000 };
+                                ui->actionSpeed50, ui->actionSpeed100, ui->actionSpeed200, ui->actionSpeed1000 };
     int playSpeeds[] = { 1, 5, 10, 20, 50, 100, 200, 1000 };
     for (uint i = 0; i < sizeof(speedActions) / sizeof(speedActions[0]); ++i) {
         QAction *action = speedActions[i];
@@ -119,6 +129,8 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(this, SIGNAL(gotStatus(Status)), m_refereeStatus, SLOT(handleStatus(Status)));
     connect(this, SIGNAL(gotPlayStatus(Status)), ui->log, SLOT(handleStatus(Status)));
     connect(this, SIGNAL(gotPlayStatus(Status)), m_plotter, SLOT(handleStatus(Status)));
+
+    connect(this, SIGNAL(gotPlayStatus(Status)), this, SLOT(publish_referre(Status)));
 
     // setup the timer used to trigger playing the next packets
     connect(&m_timer, SIGNAL(timeout()), SLOT(playNext()));
@@ -163,9 +175,9 @@ QString MainWindow::formatTime(qint64 time) {
     // nanoseconds to mm:ss.MMMM time stamp (M = milliseconds)
     const double dtime = time / 1E9;
     return QString("%1:%2.%3")
-           .arg((int) dtime / 60)
-           .arg((int) dtime % 60, 2, 10, QChar('0'))
-           .arg((int) (dtime * 1000) % 1000, 3, 10, QChar('0'));
+            .arg((int) dtime / 60)
+            .arg((int) dtime % 60, 2, 10, QChar('0'))
+            .arg((int) (dtime * 1000) % 1000, 3, 10, QChar('0'));
 }
 
 void MainWindow::openFile()
@@ -458,5 +470,93 @@ void MainWindow::handlePlaySpeed(int value)
     if (!m_paused) {
         // trigger the timer to account for the changed playback speed
         m_timer.start(0);
+    }
+}
+
+void MainWindow::publish_referre(const Status &status)
+{
+    if (status->has_game_state())
+    {
+        const amun::GameState &game_state = status->game_state();
+        const SSL_Referee::Stage stage = game_state.stage();
+        const int timeRemaining = game_state.stage_time_left() / 1000000;
+
+        SSL_Referee message;
+        message.set_command_counter(command_counter);
+        message.set_packet_timestamp(game_state.stage_time_left());
+        message.set_command_timestamp(game_state.stage_time_left());
+        message.set_stage_time_left(game_state.stage_time_left());
+        message.set_stage(stage);
+        message.mutable_blue()->CopyFrom(game_state.blue());
+        message.mutable_yellow()->CopyFrom(game_state.yellow());
+
+        switch (game_state.state())
+        {
+        case amun::GameState::Halt:
+            message.set_command(SSL_Referee::HALT);
+            break;
+        case amun::GameState::Stop:
+            message.set_command(SSL_Referee::STOP);
+            break;
+        case amun::GameState::Game:
+            message.set_command(SSL_Referee::NORMAL_START);
+            break;
+        case amun::GameState::GameForce:
+            message.set_command(SSL_Referee::FORCE_START);
+            break;
+        case amun::GameState::KickoffYellowPrepare:
+            message.set_command(SSL_Referee::PREPARE_KICKOFF_YELLOW);
+            break;
+        case amun::GameState::KickoffYellow:
+            message.set_command(SSL_Referee::NORMAL_START);
+            break;
+        case amun::GameState::PenaltyYellowPrepare:
+            message.set_command(SSL_Referee::PREPARE_PENALTY_YELLOW);
+            break;
+        case amun::GameState::PenaltyYellow:
+            message.set_command(SSL_Referee::NORMAL_START);
+            break;
+        case amun::GameState::DirectYellow:
+            message.set_command(SSL_Referee::DIRECT_FREE_YELLOW);
+            break;
+        case amun::GameState::IndirectYellow:
+            message.set_command(SSL_Referee::INDIRECT_FREE_YELLOW);
+            break;
+        case amun::GameState::KickoffBluePrepare:
+            message.set_command(SSL_Referee::PREPARE_KICKOFF_BLUE);
+            break;
+        case amun::GameState::KickoffBlue:
+            message.set_command(SSL_Referee::NORMAL_START);
+            break;
+        case amun::GameState::PenaltyBluePrepare:
+            message.set_command(SSL_Referee::PREPARE_PENALTY_BLUE);
+            break;
+        case amun::GameState::PenaltyBlue:
+            message.set_command(SSL_Referee::NORMAL_START);
+            break;
+        case amun::GameState::DirectBlue:
+            message.set_command(SSL_Referee::DIRECT_FREE_BLUE);
+            break;
+        case amun::GameState::IndirectBlue:
+            message.set_command(SSL_Referee::INDIRECT_FREE_BLUE);
+            break;
+        case amun::GameState::TimeoutBlue:
+            message.set_command(SSL_Referee::TIMEOUT_BLUE);
+            break;
+        case amun::GameState::TimeoutYellow:
+            message.set_command(SSL_Referee::TIMEOUT_YELLOW);
+            break;
+        default:
+            break;
+        }
+
+        std::string packet;
+        {
+            google::protobuf::io::StringOutputStream sos(&packet);
+            message.SerializeToZeroCopyStream(&sos);
+        }
+
+        QByteArray q_data(packet.c_str(), packet.length());
+        sendingSocket->sendData(q_data);
     }
 }

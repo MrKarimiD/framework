@@ -22,11 +22,18 @@ if(TARGET core AND TARGET protobuf AND TARGET logfile)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${PROTOBUF_INCLUDE_DIR})
+include_directories(include)
+
+# Configure Qt
+SET( QT_USE_QTNETWORK TRUE )
+ADD_DEFINITIONS( ${QT_DEFINITIONS} )
 
 set(SOURCES
     logplayer.cpp
     mainwindow.cpp
     mainwindow.h
+    networksender.cpp
+    networksender.h
     ../ra/debugmodel.cpp
     ../ra/debugmodel.h
     ../ra/debugtreewidget.cpp
@@ -41,6 +48,7 @@ set(SOURCES
     ../ra/timingwidget.h
     ../ra/visualizationwidget.cpp
     ../ra/visualizationwidget.h
+    ../../../
 )
 
 set(UI_SOURCES
@@ -64,8 +72,8 @@ endif(APPLE)
 qt5_wrap_ui(UIC_SOURCES ${UI_SOURCES})
  
 add_executable(logplayer WIN32 MACOSX_BUNDLE ${SOURCES} ${UIC_SOURCES})
-target_link_libraries(logplayer core protobuf logfile plotter ${OPENGL_LIBRARIES})
-qt5_use_modules(logplayer Widgets OpenGL)
+target_link_libraries(logplayer core protobuf logfile plotter ${QT_LIBRARIES} ${OPENGL_LIBRARIES})
+qt5_use_modules(logplayer Widgets OpenGL Network)
 
 # add plist file
 if(APPLE)

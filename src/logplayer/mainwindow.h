@@ -30,6 +30,11 @@
 #include <QList>
 #include "core/timer.h"
 #include "protobuf/status.h"
+#include "protobuf/gamestate.pb.h"
+#include <QDebug>
+#include <QByteArray>
+#include "networksender.h"
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 
 class LogFileReader;
 class RefereeStatusWidget;
@@ -68,6 +73,7 @@ private slots:
     void playNext();
     void togglePaused();
     void handlePlaySpeed(int value);
+    void publish_referre(const Status &status);
 
 private:
     void closeFile();
@@ -102,7 +108,11 @@ private:
     int m_exactSliderValue;
     bool m_scroll;
 
+    int command_counter;
+
     Plotter *m_plotter;
+
+    NetworkSender *sendingSocket;
 };
 
 #endif // MAINWINDOW_H

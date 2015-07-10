@@ -35,6 +35,7 @@
 #include <QByteArray>
 #include "networksender.h"
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
+#include <cmath>
 
 class LogFileReader;
 class RefereeStatusWidget;
@@ -74,6 +75,7 @@ private slots:
     void togglePaused();
     void handlePlaySpeed(int value);
     void publish_referre(const Status &status);
+    void publish_vision(const Status &status);
 
 private:
     void closeFile();
@@ -109,10 +111,12 @@ private:
     bool m_scroll;
 
     int command_counter;
+    int frame_number;
 
     Plotter *m_plotter;
 
     NetworkSender *sendingSocket;
+    NetworkSender *visionSocket;
 };
 
 #endif // MAINWINDOW_H

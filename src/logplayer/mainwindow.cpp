@@ -33,6 +33,8 @@
 //#include "status.pb.h"
 //#include "gamestate.pb.h"
 //#include "status.h"
+#include "ssl_wrapper.pb.h"
+#include "world.pb.h"
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -51,9 +53,13 @@ MainWindow::MainWindow(QWidget *parent) :
     m_logthread->start();
 
     command_counter = 0;
+    frame_number = 0;
 
     sendingSocket = new NetworkSender();
     sendingSocket->configure("224.5.23.1",10003);
+
+    visionSocket = new NetworkSender();
+    visionSocket->configure("224.5.23.2",10006);
 
     m_logreader = new LogFileReader();
     m_logreader->moveToThread(m_logthread);
@@ -131,6 +137,7 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(this, SIGNAL(gotPlayStatus(Status)), m_plotter, SLOT(handleStatus(Status)));
 
     connect(this, SIGNAL(gotPlayStatus(Status)), this, SLOT(publish_referre(Status)));
+    connect(this, SIGNAL(gotPlayStatus(Status)), this, SLOT(publish_vision(Status)));
 
     // setup the timer used to trigger playing the next packets
     connect(&m_timer, SIGNAL(timeout()), SLOT(playNext()));
@@ -558,5 +565,70 @@ void MainWindow::publish_referre(const Status &status)
 
         QByteArray q_data(packet.c_str(), packet.length());
         sendingSocket->sendData(q_data);
+    }
+}
+
+void MainWindow::publish_vision(const Status &status)
+{
+    if (status->has_world_state())
+    {
+        frame_number++;
+        SSL_WrapperPacket message;
+
+        world::State input = status->world_state();
+
+        SSL_DetectionFrame detection;
+        detection.set_frame_number(frame_number);
+        detection.set_camera_id(0);
+        detection.set_t_capture(input.time());
+        detection.set_t_sent(input.time());
+
+        //Ball Packet
+        SSL_DetectionBall *ball = detection.add_balls();
+        world::Ball log_ball = input.ball();
+        ball->set_confidence(1);
+        ball->set_x(-log_ball.p_y()*1000);
+        ball->set_y(log_ball.p_x()*1000);
+        ball->set_pixel_x(log_ball.p_x());
+        ball->set_pixel_y(log_ball.p_y());
+
+        //Blue Robots
+        for(int i=0;i<input.blue_size();i++)
+        {
+            world::Robot tmp = input.blue(i);
+            SSL_DetectionRobot *robot = detection.add_robots_blue();
+            robot->set_confidence(0.9);
+            robot->set_robot_id(tmp.id());
+            robot->set_x(-tmp.p_y()*1000);
+            robot->set_y(tmp.p_x()*1000);
+            robot->set_orientation(M_PI_2 + tmp.phi());
+            robot->set_pixel_x(tmp.p_x());
+            robot->set_pixel_y(tmp.p_y());
+        }
+
+        //Yellow Robots
+        for(int i=0;i<input.yellow_size();i++)
+        {
+            world::Robot tmp = input.yellow(i);
+            SSL_DetectionRobot *robot = detection.add_robots_yellow();
+            robot->set_confidence(0.9);
+            robot->set_robot_id(tmp.id());
+            robot->set_x(-tmp.p_y()*1000);
+            robot->set_y(tmp.p_x()*1000);
+            robot->set_orientation(M_PI_2 + tmp.phi());
+            robot->set_pixel_x(tmp.p_x());
+            robot->set_pixel_y(tmp.p_y());
+        }
+
+        message.mutable_detection()->CopyFrom(detection);
+
+        std::string packet;
+        {
+            google::protobuf::io::StringOutputStream sos(&packet);
+            message.SerializeToZeroCopyStream(&sos);
+        }
+
+        QByteArray q_data(packet.c_str(), packet.length());
+        visionSocket->sendData(q_data);
     }
 }
